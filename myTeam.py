@@ -33,7 +33,7 @@ from util import nearestPoint
 #################
 
 def create_team(first_index, second_index, is_red,
-                first='OffensiveReflexAgent', second='DefensiveReflexAgent', num_training=0):
+                first='ReflexCaptureAgent', second='ReflexCaptureAgent', num_training=0):
     """
     This function should return a list of two agents that will form the
     team, initialized using firstIndex and secondIndex as their agent
@@ -65,6 +65,15 @@ class ReflexCaptureAgent(CaptureAgent):
         self.start = None
 
     def register_initial_state(self, game_state):
+        is_red = self.index in game_state.red_team 
+        if is_red:
+            self.friendlies = game_state.red_team
+            self.enemies = game_state.blue_team
+            self.enemy_positions = [game_state.get_agent_position(enemy) for enemy in self.enemies]
+        else:
+            self.friendlies = game_state.blue_team
+            self.enemies = game_state.red_team
+            self.enemy_positions = [game_state.get_agent_position(enemy) for enemy in self.enemies]
         self.start = game_state.get_agent_position(self.index)
         CaptureAgent.register_initial_state(self, game_state)
 
@@ -72,8 +81,18 @@ class ReflexCaptureAgent(CaptureAgent):
         """
         Picks among the actions with the highest Q(s,a).
         """
-        print(game_state)
+            
+        # while True:
+        #     break
+        print(f"I AM {self.index}")
+        print(game_state.get_agent_distances())
+        
+        print(game_state.get_agent_position(0))
+        
         actions = game_state.get_legal_actions(self.index)
+        # print(actions)
+        
+        
 
         # You can profile your evaluation time by uncommenting these lines
         # start = time.time()
