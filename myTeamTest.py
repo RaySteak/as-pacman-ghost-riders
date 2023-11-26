@@ -90,9 +90,9 @@ class ReinforcementLearningAgent(CaptureAgent):
         """
         Picks among the actions with the highest Q(s,a).
         """
-        state_image = PacmanEnv.get_state_image(game_state, self.index, self.friendlies, self.height, self.width)
-        state_image = state_image.numpy()
-        pred = self.rl.predict(state_image)
+        state_dict = PacmanEnv.get_state_dict(game_state, self.index, self.friendlies, self.enemies, self.height, self.width)
+        state_dict['img'] = state_dict['img'].numpy()
+        pred = self.rl.predict(state_dict)
         act = ACTION_NAMES[pred[0]]
         
         if act not in game_state.get_legal_actions(self.index):

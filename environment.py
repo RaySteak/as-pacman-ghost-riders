@@ -12,6 +12,7 @@ import textDisplay
 
 IMAGE_HEIGHT = 64
 IMAGE_WIDTH = 64
+FEATURES_LENGTH = 2
 NUM_AGENTS = 4
 
 ACTION_NAMES = ['North', 'South', 'West', 'East', 'Stop']
@@ -33,11 +34,15 @@ class PacmanEnv(gym.Env):
         super().__init__()
         # Define action and observation space
         # They must be gym.spaces objects
-        # Example when using discrete actions:
         self.action_space = spaces.Discrete(NUM_ACTIONS)
-        # Example for using image as input (channel-first; channel-last also works):
-        self.observation_space = spaces.Box(low=0, high=255,
-                                            shape=(IMAGE_HEIGHT, IMAGE_WIDTH, 1), dtype=np.uint8)
+        # The multi-observation must follow this format exactly:
+        # https://stable-baselines3.readthedocs.io/en/master/_modules/stable_baselines3/common/envs/multi_input_envs.html#SimpleMultiObsEnv
+        self.observation_space = spaces.Dict(
+            spaces={
+                "vec": spaces.Box(low = 0, high = 1, shape = (FEATURES_LENGTH, ), dtype=np.float64),
+                "img": spaces.Box(low = 0, high = 255, shape = (IMAGE_HEIGHT, IMAGE_WIDTH, 1), dtype=np.uint8),
+            }
+        )
         
         # Initialize
         self.layout = lay.get_layout(LAYOUT_NAME)
@@ -54,11 +59,9 @@ class PacmanEnv(gym.Env):
         
         self.rules = rules
         self.max_episode_length = max_episode_length
-        # TODO: do we really need to call this in constuctor?
-        self.reset()
     
     @staticmethod    
-    def get_state_image(obs_state, agent_index, team_indices, height, width):
+    def get_state_image(obs_state, agent_index, team_indices, enemy_indices, height, width):
         # TODO: improve image.
         game_obs_str = str(obs_state)
         game_obs = np.copy(np.frombuffer(''.join(game_obs_str.split('\n')[:-2]).encode(), dtype=np.uint8))
@@ -77,6 +80,21 @@ class PacmanEnv(gym.Env):
         game_obs = T.Resize((IMAGE_HEIGHT, IMAGE_WIDTH), T.InterpolationMode.BILINEAR)(T.ToTensor()(game_obs))
         return np.transpose(game_obs, [1, 2, 0])
     
+    @staticmethod
+    def get_state_vector(obs_state, agent_index, team_indices, enemy_indices, height, witdth):
+        # TODO: use knwoledge of enemy positions (both real and from previous estimates) to filter out the noise (maybe use a Kalman filter or something)
+        enemy_dist = np.array([obs_state.agent_distances[enemy_indices[0]], obs_state.agent_distances[enemy_indices[1]]])
+        enemy_dist = enemy_dist / (height + witdth) # Normalize distances
+        
+        return enemy_dist
+    
+    @staticmethod
+    def get_state_dict(obs_state, agent_index, team_indices, enemy_indices, height, width):
+        game_img = PacmanEnv.get_state_image(obs_state, agent_index, team_indices, enemy_indices, height, width)
+        game_vec = PacmanEnv.get_state_vector(obs_state, agent_index, team_indices, enemy_indices, height, width)
+        return {"img": game_img, "vec": game_vec}
+        
+    
     def get_reward(self, initial_state, after_agent_move_state, after_enemy_move_state, picked_illegal_action):
         # TODO: Confirm whether this assumption is correct: 
         # From what I understand from the codebase, when the BLUE team scores,
@@ -94,7 +112,7 @@ class PacmanEnv(gym.Env):
         
         weighted_score_dif = score_dif_agent + score_dif_enemy * 0.5
         
-        reward = after_enemy_move_state.get_score()
+        reward = weighted_score_dif
         if self.rl_agents == self.blue_agents:
             reward = -reward
         return reward
@@ -141,18 +159,15 @@ class PacmanEnv(gym.Env):
             terminated = self.game.game_over
         after_agent_move_state = self.game.state
         
-        # TODO Ideally, we need to do multi-observation (by additionally using
-        # a feature vector containing for example the noisy distances to the enemies). More information on how this is done here:
-        # https://stable-baselines3.readthedocs.io/en/master/_modules/stable_baselines3/common/envs/multi_input_envs.html#SimpleMultiObsEnv
         obs_state = self.agents[initial_index if terminated else self.agent_index].observation_function(self.game.state.deep_copy()) # This has the enemy positions removed
-        game_obs = self.get_state_image(obs_state, self.agent_index, self.team_indices, self.height, self.width)
+        game_dict = self.get_state_dict(obs_state, self.agent_index, self.team_indices, self.enemy_indices, self.height, self.width)
         # TODO: create a BETTER reward function and return reward.
         reward = self.get_reward(initial_state, after_agent_move_state, after_agent_move_state, picked_illegal_action)
         # TODO: find out what truncated and info are and if we need them
         truncated = False
         info = {'legal_actions': self.game.state.get_legal_actions(self.agent_index)} # This might be useful in the future, rn it's useless
         
-        return game_obs, reward, terminated, truncated, info
+        return game_dict, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
         self.agents = sum([list(el) for el in zip(self.red_agents, self.blue_agents)], [])
@@ -167,16 +182,18 @@ class PacmanEnv(gym.Env):
         if self.blue_agents == self.rl_agents:
             print("We are team BLUE")
             self.team_indices = self.game.state.blue_team
+            self.enemy_indices = self.game.state.red_team
         else:
             print("We are team RED")
             self.team_indices = self.game.state.red_team
+            self.enemy_indices = self.game.state.blue_team
 
         # If the initial agent is an enemy, we need to step with its action first
         if self.agents[self.agent_index] in self.enemy_agents:
             self.step_with_cur_agents_action()
         
         obs_state = self.agents[self.agent_index].observation_function(self.game.state.deep_copy()) # This has the enemy positions removed
-        game_obs = self.get_state_image(obs_state, self.agent_index, self.team_indices, self.height, self.width)
+        game_obs = self.get_state_dict(obs_state, self.agent_index, self.team_indices, self.enemy_indices, self.height, self.width)
         
         # TODO: same as before with the info
         info = {'legal_actions': self.game.state.get_legal_actions(self.agent_index)}
