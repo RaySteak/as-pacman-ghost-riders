@@ -108,8 +108,7 @@ class ReinforcementLearningAgent(CaptureAgent):
         self.rl = rl
 
     def register_initial_state(self, game_state):
-        is_red = self.index in game_state.red_team 
-        if is_red:
+        if self.red:
             self.friendlies = game_state.red_team
             self.enemies = game_state.blue_team
             self.enemy_positions = [game_state.get_agent_position(enemy) for enemy in self.enemies]
@@ -126,38 +125,20 @@ class ReinforcementLearningAgent(CaptureAgent):
 
     def is_fully_expanded(self, node):
         legal_actions = []
-        # print("IN IS FULLY")
         for act in my_legal_actions(node.state, node.agent_index, node.action):
-            # succ = node.state.generate_successor(node.agent_index, act)
-            # if succ.__hash__() not in self.in_tree:
-                # legal_actions.append(act)
             legal_actions.append(act)
-        # print(f'IS FULLY')
-        # print(len(legal_actions))
-        # if len(legal_actions) == 0:
-            # return print("IT'S 0")
         return len(node.children) >= len(legal_actions)
         
 
     def get_not_fully_expanded(self, node):
         if self.is_fully_expanded(node):
             sorted_children = sorted(node.children, key=lambda x: x.value, reverse=True)
-            # for child in sorted_children:
-            #     ret = self.get_not_fully_expanded(child)
-            #     if ret is not None:
-            #         return ret
-            # print("WHY HEREEEEE1")
-            # return None
             return self.get_not_fully_expanded(sorted_children[0])
         
-        # print(my_legal_actions(node.state, node.agent_index, node.action))
         for action in my_legal_actions(node.state, node.agent_index, node.action):
-            # print(action)
             if action in node.visited_actions:
                 continue
             successor = node.state.generate_successor(node.agent_index, action)
-            # if successor.__hash__() in self.in_tree:
-                # continue
             node.visited_actions.append(action)
             
             next_agent_index = (node.agent_index + 1) % NUM_AGENTS
@@ -180,22 +161,26 @@ class ReinforcementLearningAgent(CaptureAgent):
         return state
     
     def evaluate_state(self, agent_index, state):
-        state_score = state.get_score() if self.friendlies == state.red_team else -state.get_score()
+        state_score = state.get_score() if self.red else -state.get_score()
         friendlies_carrying = [state.data.agent_states[self.friendlies[0]].num_carrying,
                                  state.data.agent_states[self.friendlies[1]].num_carrying]
         
         food_list = self.get_food(state).as_list()
         my_pos = state.get_agent_state(agent_index).get_position()
-        
         if len(food_list) > 2:
             min_dist_to_food = min([self.get_maze_distance(my_pos, food) for food in food_list])
+            if agent_index in self.enemies:
+                min_dist_to_food = -min_dist_to_food
         else:
-            min_dist_to_food = 0
+            if agent_index in self.enemies:
+                min_dist_to_food = 100
+            else:
+                min_dist_to_food = -100
         
         return state_score + friendlies_carrying[0] + friendlies_carrying[1] - 0.1 * min_dist_to_food
     
-    def rollout(self, node):
-        gamma = 0.999
+    def rollout(self, node, max_depth = 20):
+        gamma = 0.5
         visited = set()
         state = node.state
         visited.add(state.__hash__())
@@ -204,28 +189,12 @@ class ReinforcementLearningAgent(CaptureAgent):
         
         rollout_value = 0
         depth = 0
-        while state.data.timeleft > 0 and not state.is_over():
-            #### I
-            # # This random policy will be replaced with a neural network for RL
-            # unvisited_actions = []
-            # for action in my_legal_actions(state, agent_index, prev_action):
-            #     child = state.generate_successor(agent_index, action)
-            #     if child.__hash__() not in visited:
-            #         unvisited_actions.append(action)
-            
-            # if len(unvisited_actions) == 0:
-            #     best_act = random.choice(my_legal_actions(state, agent_index, prev_action))
+        while state.data.timeleft > 0 and not state.is_over() and depth < max_depth:
+            # if agent_index in state.red_team:
+                # state.is_red = True
             # else:
-            #     best_act = random.choice(unvisited_actions)
-            #### II
-            # act_values = []
-            # legal_actions = my_legal_actions(state, agent_index, prev_action)
-            # for act in legal_actions:
-            #     succ = state.generate_successor(agent_index, act)
-            #     new_pos = succ.data.agent_states[agent_index].get_position()
-            #     dist = min([self.get_maze_distance(new_pos, food) for food in self.get_food(succ).as_list()])
-            #     act_values.append(dist)
-            #### III
+                # state.is_red = False
+            
             act_values = []
             legal_actions = my_legal_actions(state, agent_index, prev_action)
             for act in legal_actions:
@@ -234,24 +203,30 @@ class ReinforcementLearningAgent(CaptureAgent):
                 new_pos = (old_pos[0] + dir[0], old_pos[1] + dir[1])
                 
                 food_list = self.get_food(state).as_list()
-                if len(food_list) > 2:
-                    dist = min([self.get_maze_distance(new_pos, food) for food in food_list])
+                # if len(food_list) > 2:
+                food_dist_list = [self.get_maze_distance(new_pos, food) for food in food_list]
+                if len(food_dist_list) <= 2:
+                    friendly_side_center = (self.width / 2 + self.width / 4 * (-1 if self.red else 1), self.height / 2)
+                    val = util.manhattanDistance(new_pos, friendly_side_center)
                 else:
-                    dist = 0
-                act_values.append(dist)
+                    val = min(food_dist_list)
+                act_values.append(val)
             
             best_act = sorted([(act, val) for act, val in zip(legal_actions, act_values)], key=lambda x : x[1])[0][0]
                 
             prev_action = best_act
+            
+            # state = state.generate_successor(agent_index, best_act)
             state = self.apply_action(state, agent_index, best_act)
-            visited.add(state.__hash__())
-            rollout_value += (gamma ** depth) * self.evaluate_state(agent_index, state)
-            depth += 1
             
             # Skip over agents whose positions we don't know
             agent_index = (agent_index + 1) % NUM_AGENTS
             if state.data.agent_states[agent_index].get_position() is None:
+                state.data.timeleft -= 1
                 agent_index = (agent_index + 1) % NUM_AGENTS
+            
+            rollout_value += (gamma ** depth) * self.evaluate_state(agent_index, state)
+            depth += 1
         
         # Evaluate state score
         return rollout_value
@@ -274,8 +249,6 @@ class ReinforcementLearningAgent(CaptureAgent):
         return root
     
     def select_best_mcts_action(self, root):
-        for child in root.children:
-            print(f'For {child.action}, reward is {child.value}')
         best_node = sorted(root.children, key=lambda x: x.value, reverse=True)[0]
         return best_node.action
 
@@ -283,18 +256,10 @@ class ReinforcementLearningAgent(CaptureAgent):
         """
         Picks among the actions with the highest Q(s,a).
         """
-        state_dict = PacmanEnv.get_state_dict(game_state, self.index, self.friendlies, self.enemies, self.height, self.width)
-        state_dict['img'] = state_dict['img'].numpy()
-        pred = self.rl.predict(state_dict)
-        act = ACTION_NAMES[pred[0]]
-        
-        if act not in game_state.get_legal_actions(self.index):
-            act = random.choice(game_state.get_legal_actions(self.index))
+        mcts_root = self.mcts(game_state, 100, None)
+        act = self.select_best_mcts_action(mcts_root)
+        self.prev_act = act
         return act
-        # mcts_root = self.mcts(game_state, 100, None)
-        # act = self.select_best_mcts_action(mcts_root)
-        # self.prev_act = act
-        # return act
 
     def get_successor(self, game_state, action):
         """

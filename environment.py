@@ -9,14 +9,15 @@ from gymnasium import spaces
 from torchvision import transforms as T
 import textDisplay
 import util
+from capture import AgentRules
 # import myTeamTrain
 
 IMAGE_HEIGHT = 64
 IMAGE_WIDTH = 64
-FEATURES_LENGTH = 2
+FEATURES_LENGTH = 6
 NUM_AGENTS = 4
 
-ACTION_NAMES = ['North', 'South', 'West', 'East', 'Stop']
+ACTION_NAMES = ['North', 'South', 'West', 'East']
 NUM_ACTIONS = len(ACTION_NAMES)
 
 TEAM_FILE = 'myteamTrain'
@@ -101,85 +102,60 @@ class PacmanEnv(gym.Env):
         return np.transpose(game_obs, [1, 2, 0])
     
     @staticmethod
-    def get_state_vector(obs_state, agent_index, team_indices, enemy_indices, height, witdth):
+    def get_state_vector(obs_state, agent_index, team_indices, enemy_indices, height, width):
         # TODO: use knwoledge of enemy positions (both real and from previous estimates) to filter out the noise (maybe use a Kalman filter or something)
         enemy_dist = np.array([obs_state.agent_distances[enemy_indices[0]], obs_state.agent_distances[enemy_indices[1]]])
-        enemy_dist = enemy_dist / (height + witdth) # Normalize distances
+        enemy_dist = enemy_dist / (height + width) # Normalize distances
         
-        return enemy_dist
+        available_dirs = np.zeros(4)
+        legal_actions = obs_state.get_legal_actions(agent_index)
+        for i in range(4):
+            available_dirs[i] = 1 if ACTION_NAMES[i] in legal_actions else 0
+        
+        return np.concatenate([enemy_dist, available_dirs])
     
     @staticmethod
-    def get_state_dict(obs_state, agent_index, team_indices, enemy_indices, height, width):
+    def get_state_dict(agent, obs_state, agent_index, team_indices, enemy_indices, height, width):
         game_img = PacmanEnv.get_state_image(obs_state, agent_index, team_indices, enemy_indices, height, width)
         game_vec = PacmanEnv.get_state_vector(obs_state, agent_index, team_indices, enemy_indices, height, width)
         return {"img": game_img, "vec": game_vec}
         
     
     def get_reward(self, initial_state, after_agent_move_state, after_enemy_move_state, picked_illegal_action):
-        # TODO: Confirm whether this assumption is correct: 
-        # From what I understand from the codebase, when the BLUE team scores,
-        # the total score of the game gets decreased, and when the RED team scores,
-        # the total score of the game gets increased. Thus, negative score means
-        # a win for BLUE and a positive score means a win for red.
-        # TODO: With this implementation, most rewards will be 0, and the agent
-        # might care more about achieving immediate rewards ratherr than winning the game.
-        # TODO: Find the best course of action for illegal moves.
-        # If we return a negative reward, the agent will just stop as it's always the best move.
-        # if picked_illegal_action:
-            # return -10
-        # score_dif = after_enemy_move_state.get_score() - initial_state.get_score()
-        
-        # if self.rl_agents == self.blue_agents:
-        #     score_dif = -score_dif
-        
-        # friendly1_after_enemy = after_agent_move_state.get_agent_state(self.team_indices[0])
-        # friendly2_after_enemy = after_agent_move_state.get_agent_state(self.team_indices[1])
-        # enemy1_after_enemy = after_agent_move_state.get_agent_state(self.enemy_indices[0])
-        # enemy2_after_enemy = after_agent_move_state.get_agent_state(self.enemy_indices[1])
-        
-        # friendly1_initial = initial_state.get_agent_state(self.team_indices[0])
-        # friendly2_initial = initial_state.get_agent_state(self.team_indices[1])
-        # enemy1_initial = initial_state.get_agent_state(self.enemy_indices[0])
-        # enemy2_initial = initial_state.get_agent_state(self.enemy_indices[1])
-        
-        # friendly1_eaten_diff = friendly1_after_enemy.num_carrying - friendly1_initial.num_carrying
-        # friendly2_eaten_diff = friendly2_after_enemy.num_carrying - friendly2_initial.num_carrying
-        # enemy1_eaten_diff = enemy1_after_enemy.num_carrying - enemy1_initial.num_carrying
-        # enemy2_eaten_diff = enemy2_after_enemy.num_carrying - enemy2_initial.num_carrying
-        
-        # # friendly1_dist_to_center_after_enemy = util.manhattanDistance(friendly1_after_enemy.get_position(), (self.width // 2, self.height // 2))
-        # # friendly2_dist_to_center_after_enemy = util.manhattanDistance(friendly2_after_enemy.get_position(), (self.width // 2, self.height // 2))
-        # # friendly1_dist_to_center_initial = util.manhattanDistance(friendly1_initial.get_position(), (self.width // 2, self.height // 2))
-        # # friendly2_dist_to_center_initial = util.manhattanDistance(friendly2_initial.get_position(), (self.width // 2, self.height // 2))
-        
-        # reward = score_dif + (friendly1_eaten_diff + friendly2_eaten_diff - enemy1_eaten_diff - enemy2_eaten_diff)
         state = after_enemy_move_state
         state_score = state.get_score() if self.is_red else -state.get_score()
-        
-        if state.is_over():
-            return state_score
-        
-        agent_index = self.agent_index
         friendlies_carrying = [state.data.agent_states[self.team_indices[0]].num_carrying,
                                  state.data.agent_states[self.team_indices[1]].num_carrying]
         
         food_list = state.get_red_food().as_list() if self.is_red else state.get_blue_food().as_list()
-        my_pos = state.get_agent_state(agent_index).get_position()
-        
-        dist_fct = self.agents[agent_index].get_maze_distance
+        my_pos = state.get_agent_state(self.agent_index).get_position()
         if len(food_list) > 2:
-            min_dist_to_food = min([dist_fct(my_pos, food) for food in food_list])
+            min_dist_to_food = min([self.agents[self.agent_index].distancer.getDistance(my_pos, food) for food in food_list])
+            if self.agent_index in self.enemy_indices:
+                min_dist_to_food = -min_dist_to_food
         else:
-            min_dist_to_food = 0
+            if self.agent_index in self.enemy_indices:
+                min_dist_to_food = 100
+            else:
+                min_dist_to_food = -100
         
-        reward = state_score + friendlies_carrying[0] + friendlies_carrying[1] - 0.1 * min_dist_to_food - picked_illegal_action * 10
+        return state_score + friendlies_carrying[0] + friendlies_carrying[1] - 0.1 * min_dist_to_food
         
-        return reward
-        
+    def apply_action(self, state, agent_index, action):
+        AgentRules.apply_action(state, action, agent_index)
+        AgentRules.check_death(state, agent_index)
+        AgentRules.decrement_timer(state.data.agent_states[agent_index])
+
+        # Bookkeeping
+        state.data._agent_moved = agent_index
+        state.data.score += state.data.score_change
+        state.data.timeleft = state.data.timeleft - 1
+        return state
     
     def step_game(self, action):
         self.prev_state = self.game.state
-        self.game.state = self.game.state.generate_successor(self.agent_index, action)
+        # self.game.state = self.game.state.generate_successor(self.agent_index, action)
+        self.game.state = self.apply_action(self.game.state, self.agent_index, action)
         self.game.move_history.append((self.agent_index, action))
         
         self.rules.process(self.game.state, self.game)
@@ -218,8 +194,9 @@ class PacmanEnv(gym.Env):
             terminated = self.game.game_over
         after_agent_move_state = self.game.state
         
-        obs_state = self.agents[initial_index if terminated else self.agent_index].observation_function(self.game.state.deep_copy()) # This has the enemy positions removed
-        game_dict = self.get_state_dict(obs_state, initial_index if terminated else self.agent_index, self.team_indices, self.enemy_indices, self.height, self.width)
+        obs_agent_index = initial_index if terminated else self.agent_index
+        obs_state = self.agents[obs_agent_index].observation_function(self.game.state.deep_copy()) # This has the enemy positions removed'
+        game_dict = self.get_state_dict(self.agents[obs_agent_index], obs_state, obs_agent_index, self.team_indices, self.enemy_indices, self.height, self.width)
         # TODO: create a BETTER reward function and return reward.
         reward = self.get_reward(initial_state, after_agent_move_state, after_agent_move_state, picked_illegal_action)
         # TODO: find out what truncated and info are and if we need them
@@ -254,7 +231,7 @@ class PacmanEnv(gym.Env):
             self.step_with_cur_agents_action()
         
         obs_state = self.agents[self.agent_index].observation_function(self.game.state.deep_copy()) # This has the enemy positions removed
-        game_obs = self.get_state_dict(obs_state, self.agent_index, self.team_indices, self.enemy_indices, self.height, self.width)
+        game_obs = self.get_state_dict(self.agents[self.agent_index], obs_state, self.agent_index, self.team_indices, self.enemy_indices, self.height, self.width)
         
         # TODO: same as before with the info
         info = {'legal_actions': self.game.state.get_legal_actions(self.agent_index)}
