@@ -35,7 +35,7 @@ ACTION_NAMES = ['North', 'South', 'West', 'East', 'Stop']
 NUM_AGENTS = 4
 # Hyperparameters
 max_depth = 10 # Max depth to which to do rollouts
-discard_enemy_pos_threshold = 5 # After how many moves of not seeing the enemy to discard the estimated enemy position
+discard_enemy_pos_threshold = 3000 # After how many moves of not seeing the enemy to discard the estimated enemy position
 gamma = 0.9 # Discount factor for rollouts
 epsilon = 0.1 # Probability of choosing random action in the rollout policy
 prev_action_weight = 0.001 # Weight of undoing previous action in the rollout policy when choosing a random action (the lower, the less likely the random action will undo the previous action)
@@ -211,6 +211,8 @@ class ReinforcementLearningAgent(CaptureAgent):
         epsilon2 = 1 / (1 + np.exp(-(2 * carrying / (len(food_list) + carrying) - 1) * sigmoid_cutoff)) # No food => epsilon2 really small; lots of food => epsilon2 really big
         dist_to_objective = (1 - epsilon2) * dist_to_food + epsilon2 * dist_to_friendly_side
         
+        # TODO: if there is an enemy on the friendly side, HARD penalty for being far away from it (maybe for deffensive agent only)x
+        # TODO: penalize how close the enemy food is to the enemy side (shouldn't improve that much)
         return 100 * state_score \
                + friendlies_carrying[0] + friendlies_carrying[1] \
                - enemies_carrying[0] - enemies_carrying[1] \
@@ -314,6 +316,14 @@ class ReinforcementLearningAgent(CaptureAgent):
                 not_seen_by_friendly2 = True
             
             if not_seen_by_friendly1 and not_seen_by_friendly2:
+                print("SETTING RANDOM POSITION ON FRIENDLY SIDE FOR ENEMY")
+                food_list = game_state.get_red_food().as_list() if self.red else game_state.get_blue_food().as_list()
+                while True:
+                    rand_pos = random.choice(food_list)
+                    if util.manhattanDistance(rand_pos, friendly1_pos) > SIGHT_RANGE and util.manhattanDistance(rand_pos, friendly2_pos) > SIGHT_RANGE:
+                        enemy_positions[i] = random.choice([(rand_pos[0] + x, rand_pos[1] + y) for x in [-1, 1] for y in [-1, 1] if not game_state.has_wall(rand_pos[0] + x, rand_pos[1] + y)])
+                        enemy_positions[i] = (int(enemy_positions[0]), int(enemy_positions[1]))
+                        break
                 enemy_positions[i] = None
                 continue
             
