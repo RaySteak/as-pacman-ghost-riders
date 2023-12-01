@@ -211,7 +211,8 @@ class ReinforcementLearningAgent(CaptureAgent):
         epsilon2 = 1 / (1 + np.exp(-(2 * carrying / (len(food_list) + carrying) - 1) * sigmoid_cutoff)) # No food => epsilon2 really small; lots of food => epsilon2 really big
         dist_to_objective = (1 - epsilon2) * dist_to_food + epsilon2 * dist_to_friendly_side
         
-        # TODO: if there is an enemy on the friendly side, HARD penalty for being far away from it (maybe for deffensive agent only)x
+        # TODO: if there is an enemy on the friendly side, HARD penalty for being far away from him (maybe for deffensive agent only)
+        # don't worry, I made sure there is always an estimate of the enemy position available
         # TODO: penalize how close the enemy food is to the enemy side (shouldn't improve that much)
         return 100 * state_score \
                + friendlies_carrying[0] + friendlies_carrying[1] \
@@ -324,7 +325,7 @@ class ReinforcementLearningAgent(CaptureAgent):
                         enemy_positions[i] = random.choice([(rand_pos[0] + x, rand_pos[1] + y) for x in [-1, 1] for y in [-1, 1] if not game_state.has_wall(rand_pos[0] + x, rand_pos[1] + y)])
                         enemy_positions[i] = (int(enemy_positions[i][0]), int(enemy_positions[i][1]))
                         break
-                continue
+                pos = enemy_positions[i]
             
             game_state.data.agent_states[self.enemies[i]].configuration = Configuration(pos, Directions.STOP)
         
@@ -355,6 +356,7 @@ class ReinforcementLearningAgent(CaptureAgent):
         # Update estimated enemy positions
         for i, enemy_ind in enumerate(self.enemies):
             # Set estimated position to actual position if agent is in sight
+            # TODO: also set enemy position by getting the position of the missing food
             if game_state.data.agent_states[enemy_ind].get_position() is not None:
                 enemy_pos = game_state.data.agent_states[enemy_ind].get_position()
                 enemy_positions[i] = (enemy_pos[0], enemy_pos[1])
@@ -366,7 +368,7 @@ class ReinforcementLearningAgent(CaptureAgent):
                     enemy_positions[i] = None
         # Run MCTS
         mcts_root = self.mcts(game_state)
-        print([(child.value, child.action) for child in mcts_root.children])
+        # print([(child.value, child.action) for child in mcts_root.children])
         print(f'Enemy positions', enemy_positions)
         # Choose best (for us) action for our agent
         best_child = self.select_best_mcts_child(mcts_root)
