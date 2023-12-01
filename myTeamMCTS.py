@@ -324,7 +324,6 @@ class ReinforcementLearningAgent(CaptureAgent):
                         enemy_positions[i] = random.choice([(rand_pos[0] + x, rand_pos[1] + y) for x in [-1, 1] for y in [-1, 1] if not game_state.has_wall(rand_pos[0] + x, rand_pos[1] + y)])
                         enemy_positions[i] = (int(enemy_positions[i][0]), int(enemy_positions[i][1]))
                         break
-                enemy_positions[i] = None
                 continue
             
             game_state.data.agent_states[self.enemies[i]].configuration = Configuration(pos, Directions.STOP)
