@@ -27,14 +27,16 @@ import time
 from copy import deepcopy
 
 from captureAgents import CaptureAgent
-from game import Directions
 from util import nearestPoint
-from environment import PacmanEnv
-from capture import AgentRules
-from game import Configuration
+from capture import AgentRules, SIGHT_RANGE
+from game import Configuration, Directions
 ACTION_NAMES = ['North', 'South', 'West', 'East', 'Stop']
 
 NUM_AGENTS = 4
+# Hyperparameters
+discard_enemy_pos_threshold = 5 # After how many moves to discard the enemy position
+gamma = 0.9 # Discount factor
+prev_action_weight = 0.0001 # Weight of undoing previous action in the rollout policy
 
 #################
 # Team creation #
@@ -86,6 +88,7 @@ class TreeNode:
         self.value = self.reward / self.visits
 
 enemy_positions = None
+not_seen_for = [0, 0]
 
 class ReinforcementLearningAgent(CaptureAgent):
     """
@@ -110,14 +113,27 @@ class ReinforcementLearningAgent(CaptureAgent):
             self.enemies = game_state.red_team
         self.height = game_state.data.layout.height
         self.width = game_state.data.layout.width
-        self.prev_act = None
         # TODO: use the start positions of the enemies somehow
         enemy_positions = [game_state.get_agent_position(self.enemies[0]), game_state.get_agent_position(self.enemies[1])]
         CaptureAgent.register_initial_state(self, game_state)
 
     def is_fully_expanded(self, node):
         return len(node.children) >= len(my_legal_actions(node.state, node.agent_index))
-        
+    
+    def get_action_probabilities(self, legal_actions, prev_action, agent_index):
+        agent_index = 5
+        if agent_index == 1:
+            print("Agent index:", agent_index)
+            print("Prev action:", prev_action)
+            print("All actions:", legal_actions)
+        p = np.array([1 / len(legal_actions)] * len(legal_actions))
+        for i, act in enumerate(legal_actions):
+            if Directions.REVERSE[act] == prev_action:
+                p[i] *= prev_action_weight
+        p /= np.sum(p)
+        if agent_index == 1:
+            print("Probabilities:", p)
+        return p
 
     def get_not_fully_expanded(self, node):
         if self.is_fully_expanded(node):
@@ -127,6 +143,11 @@ class ReinforcementLearningAgent(CaptureAgent):
                 sorted_children = sorted(node.children, key=lambda x: x.value, reverse=True)
             return self.get_not_fully_expanded(sorted_children[0])
         
+        legal_actions = my_legal_actions(node.state, node.agent_index)
+        action_probabilities = self.get_action_probabilities(legal_actions, node.action, 5)
+        actions_prob_list = [(act, prob) for act, prob in zip(legal_actions, action_probabilities)]
+        actions_prob_list = sorted(actions_prob_list, key=lambda x: x[1], reverse=True)
+        legal_actions = [act for act, _ in actions_prob_list]
         for action in my_legal_actions(node.state, node.agent_index):
             if action in node.visited_actions:
                 continue
@@ -134,10 +155,9 @@ class ReinforcementLearningAgent(CaptureAgent):
             node.visited_actions.append(action)
             
             next_agent_index = (node.agent_index + 1) % NUM_AGENTS
-            # if successor.data.agent_states[next_agent_index].get_position() is None:
-                # next_agent_index = (next_agent_index + 1) % NUM_AGENTS
+            if successor.data.agent_states[next_agent_index].get_position() is None:
+                next_agent_index = (next_agent_index + 1) % NUM_AGENTS
             
-            self.in_tree.add(successor.__hash__())
             node.add_child(TreeNode(successor, next_agent_index, node, action))
             return node.children[-1]
     
@@ -165,7 +185,7 @@ class ReinforcementLearningAgent(CaptureAgent):
         enemies_carrying = [state.data.agent_states[enemies[0]].num_carrying,
                                  state.data.agent_states[enemies[1]].num_carrying]
         
-        food_list = state.get_red_food().as_list() if is_red else state.get_blue_food().as_list()
+        food_list = state.get_blue_food().as_list() if is_red else state.get_red_food().as_list()
         my_pos = state.get_agent_state(agent_index).get_position()
         if len(food_list) > 2:
             dist_to_objective = min([self.get_maze_distance(my_pos, food) for food in food_list])
@@ -180,9 +200,6 @@ class ReinforcementLearningAgent(CaptureAgent):
                - 0.1 * dist_to_objective
     
     def rollout_policy(self, state, agent_index, prev_action):
-        epsilon = 0.2
-        prev_action_weight = 0.1
-        
         legal_actions = my_legal_actions(state, agent_index)
         # act_values = []
         # for act in legal_actions:
@@ -201,18 +218,15 @@ class ReinforcementLearningAgent(CaptureAgent):
         # best_act = sorted([(act, val) for act, val in zip(legal_actions, act_values)], key=lambda x : x[1])[0][0]
         
         # if random.uniform(0, 1) < epsilon:
-        p = np.array([1 / len(legal_actions)] * len(legal_actions))
-        for i, act in enumerate(legal_actions):
-            if act == prev_action:
-                p[i] *= prev_action_weight
-        p /= np.sum(p)
+        p = self.get_action_probabilities(legal_actions, prev_action, agent_index)
         best_act = np.random.choice(legal_actions, replace = False, p = p)
-        
+        # if agent_index == 1:
+            # print("Chosen action:", best_act)
+            # print()
         return best_act
     
     def rollout(self, node):
-        max_depth = 20
-        gamma = 0.9
+        max_depth = 10
         
         visited = set()
         state = node.state.deep_copy()
@@ -229,18 +243,22 @@ class ReinforcementLearningAgent(CaptureAgent):
             prev_actions[agent_index] = best_act
             
             # state = state.generate_successor(agent_index, best_act)
+            previous_state_value = self.evaluate_state(agent_index, state)
+            
             state = self.apply_action(state, agent_index, best_act)
             
             state_value = self.evaluate_state(agent_index, state)
+            # if agent_index == 1:
+                # print(f'For {agent_index}, reward is {state_value}')
+            # print(agent_index)
             if agent_index in self.enemies:
                 state_value = -state_value 
             
-            rollout_value += (gamma ** (depth // 2)) * state_value
+            rollout_value += (gamma ** (depth)) * (state_value - previous_state_value)
             
             # Skip over agents whose positions we don't know
             agent_index = (agent_index + 1) % NUM_AGENTS
             if state.data.agent_states[agent_index].get_position() is None:
-                print("WADAFAK")
                 state.data.timeleft -= 1
                 agent_index = (agent_index + 1) % NUM_AGENTS
             
@@ -249,18 +267,37 @@ class ReinforcementLearningAgent(CaptureAgent):
         return rollout_value
      
     def backpropagate(self, node, reward):
+        ascent = 0
         while node is not None:
             node.update(reward)
             node = node.parent
+            if node is not None:
+                reward = reward / len(node.children)
+            ascent += 1
 
     def mcts(self, game_state):
-        # Put estimated positions of enemies into the game state
+        # Set enemy positions to estimated positions if they are valid
+        # TODO: can an enemy be seen by friendly 1 if friendly 2 is in range only?
         for i, pos in enumerate(enemy_positions):
+            if pos is None: # If we get here, we have lost track of the enemy at the previous step
+                continue
+            
+            not_seen_by_friendly1 = False
+            friendly1_pos = game_state.data.agent_states[self.friendlies[0]].get_position()
+            if util.manhattanDistance(friendly1_pos, pos) <= SIGHT_RANGE and game_state.data.agent_states[self.enemies[i]].get_position() is None:
+                not_seen_by_friendly1 = True
+            not_seen_by_friendly2 = False
+            friendly2_pos = game_state.data.agent_states[self.friendlies[1]].get_position()
+            if util.manhattanDistance(friendly2_pos, pos) <= SIGHT_RANGE and game_state.data.agent_states[self.enemies[i]].get_position() is None:
+                not_seen_by_friendly2 = True
+            
+            if not_seen_by_friendly1 and not_seen_by_friendly2:
+                enemy_positions[i] = None
+                continue
+            
             game_state.data.agent_states[self.enemies[i]].configuration = Configuration(pos, Directions.STOP)
         
         entry_time = time.perf_counter()
-        self.in_tree = set()
-        self.in_tree.add(game_state.__hash__())
         root = TreeNode(game_state, self.index)
         while True:
             # print(f'For {i}, reward is {root.value}')
@@ -284,29 +321,31 @@ class ReinforcementLearningAgent(CaptureAgent):
         return worst_node
 
     def choose_action(self, game_state):
-        print(self.friendlies)
-        self.friendlies.reverse()
-        print(self.friendlies)
-        print("CUR INDEX: ", self.index)
-        # TODO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! WHY IS "AT START" DIFFERENT FROM "AFTER"
-        print("AT START: ", enemy_positions)
-        # Set estimated enemy positions to atual positions when we can see them
-        for i in range(len(game_state.data.agent_states)):
-            if i in self.enemies and game_state.data.agent_states[i].get_position() is not None:
-                enemy_positions[i] = game_state.data.agent_states[i].get_position()
+        # Update estimated enemy positions
+        for i, enemy_ind in enumerate(self.enemies):
+            # Set estimated position to actual position if agent is in sight
+            if game_state.data.agent_states[enemy_ind].get_position() is not None:
+                enemy_pos = game_state.data.agent_states[enemy_ind].get_position()
+                enemy_positions[i] = (enemy_pos[0], enemy_pos[1])
+            # Set estimated position to None if agent hasn't been seen for a long time
+            else:
+                not_seen_for[i] += 1
+                if not_seen_for[i] >= discard_enemy_pos_threshold:
+                    enemy_positions[i] = None
         # Run MCTS
         mcts_root = self.mcts(game_state)
+        print([(child.value, child.action) for child in mcts_root.children])
+        print(f'Enemy positions', enemy_positions)
         # Choose best (for us) action for our agent
         best_child = self.select_best_mcts_child(mcts_root)
         act = best_child.action
         # Choose worst (for us) action for our enemy
-        best_enemy_child = self.select_worst_mcts_child(best_child)
-        enemy_act = best_enemy_child.action
+        if best_child.agent_index in self.enemies:
+            best_enemy_child = self.select_worst_mcts_child(best_child)
+            enemy_act = best_enemy_child.action
         
-        state_after_enemy_act = self.apply_action(best_child.state, best_child.agent_index, enemy_act)
-        print("Before: ", enemy_positions)
-        for i in range(len(enemy_positions)):
-            enemy_positions[i] = deepcopy(state_after_enemy_act.get_agent_position(self.enemies[i]))
-        print("After: ", enemy_positions)
+            state_after_enemy_act = self.apply_action(best_child.state, best_child.agent_index, enemy_act)
+            for i in range(len(enemy_positions)):
+                enemy_positions[i] = deepcopy(state_after_enemy_act.get_agent_position(self.enemies[i]))
         # print(self.enemy_positions)
         return act
