@@ -322,7 +322,7 @@ class ReinforcementLearningAgent(CaptureAgent):
                     rand_pos = random.choice(food_list)
                     if util.manhattanDistance(rand_pos, friendly1_pos) > SIGHT_RANGE and util.manhattanDistance(rand_pos, friendly2_pos) > SIGHT_RANGE:
                         enemy_positions[i] = random.choice([(rand_pos[0] + x, rand_pos[1] + y) for x in [-1, 1] for y in [-1, 1] if not game_state.has_wall(rand_pos[0] + x, rand_pos[1] + y)])
-                        enemy_positions[i] = (int(enemy_positions[0]), int(enemy_positions[1]))
+                        enemy_positions[i] = (int(enemy_positions[i][0]), int(enemy_positions[i][1]))
                         break
                 enemy_positions[i] = None
                 continue
