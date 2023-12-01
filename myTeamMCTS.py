@@ -29,14 +29,17 @@ from copy import deepcopy
 from captureAgents import CaptureAgent
 from util import nearestPoint
 from capture import AgentRules, SIGHT_RANGE
-from game import Configuration, Directions
+from game import Configuration, Directions, Actions
 ACTION_NAMES = ['North', 'South', 'West', 'East', 'Stop']
 
 NUM_AGENTS = 4
 # Hyperparameters
-discard_enemy_pos_threshold = 5 # After how many moves to discard the enemy position
-gamma = 0.9 # Discount factor
-prev_action_weight = 0.0001 # Weight of undoing previous action in the rollout policy
+max_depth = 10 # Max depth to which to do rollouts
+discard_enemy_pos_threshold = 5 # After how many moves of not seeing the enemy to discard the estimated enemy position
+gamma = 0.9 # Discount factor for rollouts
+epsilon = 0.1 # Probability of choosing random action in the rollout policy
+prev_action_weight = 0.001 # Weight of undoing previous action in the rollout policy when choosing a random action (the lower, the less likely the random action will undo the previous action)
+sigmoid_cutoff = 6 # The values of epsilon2 will be taken by sampling the sigmoid from [-sigmoid_cutoff, sigmoid_cutoff]
 
 #################
 # Team creation #
@@ -113,7 +116,7 @@ class ReinforcementLearningAgent(CaptureAgent):
             self.enemies = game_state.red_team
         self.height = game_state.data.layout.height
         self.width = game_state.data.layout.width
-        # TODO: use the start positions of the enemies somehow
+        self.total_food = len(game_state.get_red_food().as_list())
         enemy_positions = [game_state.get_agent_position(self.enemies[0]), game_state.get_agent_position(self.enemies[1])]
         CaptureAgent.register_initial_state(self, game_state)
 
@@ -172,6 +175,15 @@ class ReinforcementLearningAgent(CaptureAgent):
         state.data.timeleft = state.data.timeleft - 1
         return state
     
+    def dist_to_friendly_side(self, state, my_pos):
+        border = [(int(self.width / 2 + (0 if self.red else 1)), i) for i in range(self.height)]
+        border_dists = []
+        for border_cell in border:
+            # Check if cell is wall:
+            if not state.has_wall(border_cell[0], border_cell[1]):
+                border_dists.append(self.get_maze_distance(my_pos, border_cell))
+        return min(border_dists)
+    
     def evaluate_state(self, agent_index, state):
         is_red = agent_index in state.red_team
         
@@ -186,48 +198,61 @@ class ReinforcementLearningAgent(CaptureAgent):
                                  state.data.agent_states[enemies[1]].num_carrying]
         
         food_list = state.get_blue_food().as_list() if is_red else state.get_red_food().as_list()
+        enemy_food_list = state.get_red_food().as_list() if is_red else state.get_blue_food().as_list()
         my_pos = state.get_agent_state(agent_index).get_position()
         if len(food_list) > 2:
-            dist_to_objective = min([self.get_maze_distance(my_pos, food) for food in food_list])
+            dist_to_food = min([self.get_maze_distance(my_pos, food) for food in food_list])
         else:
-            # TODO: replace with minimimum maze distance to a border cell on the friendly side
-            friendly_side_center = (self.width / 2 + self.width / 4 * (-1 if self.red else 1), self.height / 2)
-            dist_to_objective = util.manhattanDistance(my_pos, friendly_side_center)
+            dist_to_food = self.dist_to_friendly_side(state, my_pos)
+        
+        dist_to_friendly_side = self.dist_to_friendly_side(state, my_pos)
+        
+        carrying = state.data.agent_states[agent_index].num_carrying
+        epsilon2 = 1 / (1 + np.exp(-(2 * carrying / (len(food_list) + carrying) - 1) * sigmoid_cutoff)) # No food => epsilon2 really small; lots of food => epsilon2 really big
+        dist_to_objective = (1 - epsilon2) * dist_to_food + epsilon2 * dist_to_friendly_side
         
         return 100 * state_score \
                + friendlies_carrying[0] + friendlies_carrying[1] \
                - enemies_carrying[0] - enemies_carrying[1] \
-               - 0.1 * dist_to_objective
+               - 10 * len(food_list) + 10 * len(enemy_food_list) \
+               - 5 * dist_to_objective
     
     def rollout_policy(self, state, agent_index, prev_action):
         legal_actions = my_legal_actions(state, agent_index)
-        # act_values = []
-        # for act in legal_actions:
-        #     dir = Actions.direction_to_vector(act)
-        #     old_pos = state.data.agent_states[agent_index].get_position()
-        #     new_pos = (old_pos[0] + dir[0], old_pos[1] + dir[1])
-            
-        #     food_list = self.get_food(state).as_list()
-        #     food_dist_list = [self.get_maze_distance(new_pos, food) for food in food_list]
-        #     if len(food_dist_list) <= 2:
-        #         friendly_side_center = (self.width / 2 + self.width / 4 * (-1 if self.red else 1), self.height / 2)
-        #         val = util.manhattanDistance(new_pos, friendly_side_center)
-        #     else:
-        #         val = min(food_dist_list)
-        #     act_values.append(val)
-        # best_act = sorted([(act, val) for act, val in zip(legal_actions, act_values)], key=lambda x : x[1])[0][0]
+        # Pick random action
+        if np.random.uniform(0, 1) < epsilon:
+            p = self.get_action_probabilities(legal_actions, prev_action, agent_index)
+            return np.random.choice(legal_actions, replace = False, p = p)
         
-        # if random.uniform(0, 1) < epsilon:
-        p = self.get_action_probabilities(legal_actions, prev_action, agent_index)
-        best_act = np.random.choice(legal_actions, replace = False, p = p)
-        # if agent_index == 1:
-            # print("Chosen action:", best_act)
-            # print()
-        return best_act
+        food_list = self.get_food(state).as_list()
+        carrying = state.data.agent_states[agent_index].num_carrying
+        
+        eat_food_act_values = []
+        score_points_act_values = []
+        for act in legal_actions:
+            dir = Actions.direction_to_vector(act)
+            old_pos = state.data.agent_states[agent_index].get_position()
+            new_pos = (old_pos[0] + dir[0], old_pos[1] + dir[1])
+            
+            food_dist_list = [self.get_maze_distance(new_pos, food) for food in food_list]
+            if len(food_dist_list) <= 2:
+                eat_food_val = -self.dist_to_friendly_side(state, new_pos)
+            else:
+                eat_food_val = -min(food_dist_list)
+                
+            score_points_val = -self.dist_to_friendly_side(state, new_pos)
+            
+            eat_food_act_values.append(eat_food_val)
+            score_points_act_values.append(score_points_val)
+        
+        epsilon2 = 1 / (1 + np.exp(-(2 * carrying / (len(food_list) + carrying) - 1) * sigmoid_cutoff)) # No food => epsilon2 really small; lots of food => epsilon2 really big
+        # print(epsilon2)
+        
+        if np.random.uniform(0, 1) > epsilon2: # When carrying little food, high chance to happen
+            return max([(act, val) for act, val in zip(legal_actions, eat_food_act_values)], key=lambda x : x[1])[0]
+        return max([(act, val) for act, val in zip(legal_actions, score_points_act_values)], key=lambda x : x[1])[0]
     
     def rollout(self, node):
-        max_depth = 10
-        
         visited = set()
         state = node.state.deep_copy()
         
@@ -243,7 +268,6 @@ class ReinforcementLearningAgent(CaptureAgent):
             prev_actions[agent_index] = best_act
             
             # state = state.generate_successor(agent_index, best_act)
-            previous_state_value = self.evaluate_state(agent_index, state)
             
             state = self.apply_action(state, agent_index, best_act)
             
@@ -254,7 +278,7 @@ class ReinforcementLearningAgent(CaptureAgent):
             if agent_index in self.enemies:
                 state_value = -state_value 
             
-            rollout_value += (gamma ** (depth)) * (state_value - previous_state_value)
+            rollout_value += (gamma ** (depth)) * (state_value)
             
             # Skip over agents whose positions we don't know
             agent_index = (agent_index + 1) % NUM_AGENTS
@@ -271,8 +295,6 @@ class ReinforcementLearningAgent(CaptureAgent):
         while node is not None:
             node.update(reward)
             node = node.parent
-            if node is not None:
-                reward = reward / len(node.children)
             ascent += 1
 
     def mcts(self, game_state):
@@ -327,6 +349,7 @@ class ReinforcementLearningAgent(CaptureAgent):
             if game_state.data.agent_states[enemy_ind].get_position() is not None:
                 enemy_pos = game_state.data.agent_states[enemy_ind].get_position()
                 enemy_positions[i] = (enemy_pos[0], enemy_pos[1])
+                not_seen_for[i] = 0
             # Set estimated position to None if agent hasn't been seen for a long time
             else:
                 not_seen_for[i] += 1
