@@ -1,7 +1,5 @@
 # Team Information
 
-test
-
 **Course:** Autonomous systems 2023-32806-T1
 
 **Semester:** Semester 1, 2024
