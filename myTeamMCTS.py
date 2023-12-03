@@ -35,7 +35,7 @@ ACTION_NAMES = ['North', 'South', 'West', 'East', 'Stop']
 NUM_AGENTS = 4
 # Hyperparameters
 max_depth = 10 # Max depth to which to do rollouts
-discard_enemy_pos_threshold = 3000 # After how many moves of not seeing the enemy to discard the estimated enemy position
+discard_enemy_pos_threshold = 999999 # After how many moves of not seeing the enemy to discard the estimated enemy position
 gamma = 0.9 # Discount factor for rollouts
 epsilon = 0.1 # Probability of choosing random action in the rollout policy
 prev_action_weight = 0.001 # Weight of undoing previous action in the rollout policy when choosing a random action (the lower, the less likely the random action will undo the previous action)
@@ -46,7 +46,7 @@ sigmoid_cutoff = 6 # The values of epsilon2 will be taken by sampling the sigmoi
 #################
 
 def create_team(first_index, second_index, is_red,
-                first='ReinforcementLearningAgent', second='ReinforcementLearningAgent', num_training=0):
+                first='MCTSAgent', second='MCTSAgent', num_training=0):
     """
     This function should return a list of two agents that will form the
     team, initialized using firstIndex and secondIndex as their agent
@@ -93,7 +93,7 @@ class TreeNode:
 enemy_positions = None
 not_seen_for = [0, 0]
 
-class ReinforcementLearningAgent(CaptureAgent):
+class MCTSAgent(CaptureAgent):
     """
     A base class for reflex agents that choose score-maximizing actions
     """
@@ -103,11 +103,10 @@ class ReinforcementLearningAgent(CaptureAgent):
         self.rl = None
         self.start = None
 
-    def set_rl_model(self, rl):
-        self.rl = rl
-
     def register_initial_state(self, game_state):
         global enemy_positions
+        CaptureAgent.register_initial_state(self, game_state)
+        
         if self.red:
             self.friendlies = game_state.red_team
             self.enemies = game_state.blue_team
@@ -116,26 +115,17 @@ class ReinforcementLearningAgent(CaptureAgent):
             self.enemies = game_state.red_team
         self.height = game_state.data.layout.height
         self.width = game_state.data.layout.width
-        self.total_food = len(game_state.get_red_food().as_list())
         enemy_positions = [game_state.get_agent_position(self.enemies[0]), game_state.get_agent_position(self.enemies[1])]
-        CaptureAgent.register_initial_state(self, game_state)
 
     def is_fully_expanded(self, node):
         return len(node.children) >= len(my_legal_actions(node.state, node.agent_index))
     
-    def get_action_probabilities(self, legal_actions, prev_action, agent_index):
-        agent_index = 5
-        if agent_index == 1:
-            print("Agent index:", agent_index)
-            print("Prev action:", prev_action)
-            print("All actions:", legal_actions)
+    def get_action_probabilities(self, legal_actions, prev_action):
         p = np.array([1 / len(legal_actions)] * len(legal_actions))
         for i, act in enumerate(legal_actions):
             if Directions.REVERSE[act] == prev_action:
                 p[i] *= prev_action_weight
         p /= np.sum(p)
-        if agent_index == 1:
-            print("Probabilities:", p)
         return p
 
     def get_not_fully_expanded(self, node):
@@ -147,7 +137,7 @@ class ReinforcementLearningAgent(CaptureAgent):
             return self.get_not_fully_expanded(sorted_children[0])
         
         legal_actions = my_legal_actions(node.state, node.agent_index)
-        action_probabilities = self.get_action_probabilities(legal_actions, node.action, 5)
+        action_probabilities = self.get_action_probabilities(legal_actions, node.action)
         actions_prob_list = [(act, prob) for act, prob in zip(legal_actions, action_probabilities)]
         actions_prob_list = sorted(actions_prob_list, key=lambda x: x[1], reverse=True)
         legal_actions = [act for act, _ in actions_prob_list]
@@ -224,7 +214,7 @@ class ReinforcementLearningAgent(CaptureAgent):
         legal_actions = my_legal_actions(state, agent_index)
         # Pick random action
         if np.random.uniform(0, 1) < epsilon:
-            p = self.get_action_probabilities(legal_actions, prev_action, agent_index)
+            p = self.get_action_probabilities(legal_actions, prev_action)
             return np.random.choice(legal_actions, replace = False, p = p)
         
         food_list = self.get_food(state).as_list()
@@ -275,8 +265,6 @@ class ReinforcementLearningAgent(CaptureAgent):
             state = self.apply_action(state, agent_index, best_act)
             
             state_value = self.evaluate_state(agent_index, state)
-            # if agent_index == 1:
-                # print(f'For {agent_index}, reward is {state_value}')
             # print(agent_index)
             if agent_index in self.enemies:
                 state_value = -state_value 
@@ -304,7 +292,7 @@ class ReinforcementLearningAgent(CaptureAgent):
         # Set enemy positions to estimated positions if they are valid
         # TODO: can an enemy be seen by friendly 1 if friendly 2 is in range only?
         for i, pos in enumerate(enemy_positions):
-            if pos is None: # If we get here, we have lost track of the enemy at the previous step
+            if pos is None: # If we get here, we have lost track of the enemy at the previous step (shouldn't happen if threshold is high enough)
                 continue
             
             not_seen_by_friendly1 = False
