@@ -50,7 +50,7 @@ sigmoid_cutoff = 6 # The values of epsilon2 will be taken by sampling the sigmoi
 #################
 
 def create_team(first_index, second_index, is_red,
-                first='OffensiveMCTSAgent', second='DefensiveMCTSAgent', num_training=0):
+                first='DefensiveMCTSAgent', second='OffensiveMCTSAgent', num_training=0):
     """
     This function should return a list of two agents that will form the
     team, initialized using firstIndex and secondIndex as their agent
@@ -390,7 +390,7 @@ class OffensiveMCTSAgent(MCTSAgent):
 class DefensiveMCTSAgent(MCTSAgent):
     def __init__(self, index, time_for_computing=.1):
         super().__init__(index, time_for_computing)
-        self.total_dist_to_invading_enemies_weight = 15
+        self.total_dist_to_invading_enemies_weight = 50
 
 class ReinforcementLearningAgent(CaptureAgent):
     """
