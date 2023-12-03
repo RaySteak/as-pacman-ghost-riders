@@ -25,6 +25,10 @@ import util
 import numpy as np
 import time
 from copy import deepcopy
+try:
+    from environment import PacmanEnv
+except:
+    print("Environment class not found, if using RL agent, it will not work")
 
 from environment import PacmanEnv
 from captureAgents import CaptureAgent
@@ -394,6 +398,7 @@ class ReinforcementLearningAgent(CaptureAgent):
 
     def __init__(self, index, time_for_computing=.1):
         super().__init__(index, time_for_computing)
+        # This is set by the testing script. When deploying, this needs to be replaced with a load from a file
         self.rl = None
         self.start = None
 
@@ -418,6 +423,7 @@ class ReinforcementLearningAgent(CaptureAgent):
         """
         Picks among the actions with the highest Q(s,a).
         """
+        
         state_dict = PacmanEnv.get_state_dict(self, game_state, self.index, self.friendlies, self.enemies, self.height, self.width)
         # state_dict['img'] = state_dict['img'].numpy()
         pred = self.rl.predict(state_dict)
@@ -426,39 +432,3 @@ class ReinforcementLearningAgent(CaptureAgent):
         if act not in game_state.get_legal_actions(self.index):
             act = random.choice(game_state.get_legal_actions(self.index))
         return act
-    
-    def get_successor(self, game_state, action):
-        """
-        Finds the next successor which is a grid position (location tuple).
-        """
-        successor = game_state.generate_successor(self.index, action)
-        pos = successor.get_agent_state(self.index).get_position()
-        if pos != nearestPoint(pos):
-            # Only half a grid position was covered
-            return successor.generate_successor(self.index, action)
-        else:
-            return successor
-
-    def evaluate(self, game_state, action):
-        """
-        Computes a linear combination of features and feature weights
-        """
-        features = self.get_features(game_state, action)
-        weights = self.get_weights(game_state, action)
-        return features * weights
-
-    def get_features(self, game_state, action):
-        """
-        Returns a counter of features for the state
-        """
-        features = util.Counter()
-        successor = self.get_successor(game_state, action)
-        features['successor_score'] = self.get_score(successor)
-        return features
-
-    def get_weights(self, game_state, action):
-        """
-        Normally, weights do not depend on the game state.  They can be either
-        a counter or a dictionary.
-        """
-        return {'successor_score': 1.0}
