@@ -329,7 +329,7 @@ class MCTSAgent(CaptureAgent):
             unvisited_node = self.get_not_fully_expanded(root)
             reward = self.rollout(unvisited_node)
             self.backpropagate(unvisited_node, reward)
-            if time.perf_counter() - entry_time > 0.3 - 0.05:
+            if time.perf_counter() - entry_time > 1.0 - 0.05:
                 print('Time taken: ', time.perf_counter() - entry_time)
                 print('Iterations: ', root.visits)
                 break
