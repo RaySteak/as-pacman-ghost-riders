@@ -193,7 +193,9 @@ class MCTSAgent(CaptureAgent):
         dist_to_friendly_side = self.dist_to_friendly_side(state, my_pos)
         
         carrying = state.data.agent_states[agent_index].num_carrying
-        epsilon2 = 1 / (1 + np.exp(-(2 * carrying / (len(food_list) + carrying) - 1) * sigmoid_cutoff)) # No food => epsilon2 really small; lots of food => epsilon2 really big
+        normalize_carrying = (len(food_list) + carrying)
+        normalize_carrying = normalize_carrying if normalize_carrying != 0 else 1
+        epsilon2 = 1 / (1 + np.exp(-(2 * carrying / normalize_carrying - 1) * sigmoid_cutoff)) # No food => epsilon2 really small; lots of food => epsilon2 really big
         dist_to_objective = (1 - epsilon2) * dist_to_food + epsilon2 * dist_to_friendly_side
         
         # TODO: if there is an enemy on the friendly side, HARD penalty for being far away from him (maybe for deffensive agent only)
