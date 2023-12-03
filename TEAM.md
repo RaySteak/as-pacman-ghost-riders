@@ -2,20 +2,16 @@
 
 test
 
-**Course:** _[fill your course code and name]_
+**Course:** Autonomous systems 2023-32806-T1
 
-**Semester:** Semester 2, 2020
+**Semester:** Semester 1, 2024
 
-**Instructor:** _[name of your instructor]_
+**Instructor:** Anders Jonsson
 
-**Team name:** _[replace this with team name in plan text]_
+**Team name:** Ghost Riders
 
 **Team members:**
 
-* Student 1's Student number - Full Name - Student email - Student Github id
-* Student 2's Student number - Full Name - Student email - Student Github id
-* Student 3's Student number - Full Name - Student email - Student Github id
-
-Replace the lines above with the correct details of members. Delete or add lines as needed.
-
-Student numbers should just be the **numbers**.
+* 234621 - Adrian  Gheorghiu- adrian.gheorghiu01@estudiant.upf.edu - RaySteak
+* 234136 - Ahmet Çalış - ahmet.calis01@estudiant.upf.edu - ahbis99
+* 234618 - Joaquín Figueira - joaquin.figueira01@estudiant.upf.edu - jacomof Github id

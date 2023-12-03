@@ -26,6 +26,7 @@ import numpy as np
 import time
 from copy import deepcopy
 
+from environment import PacmanEnv
 from captureAgents import CaptureAgent
 from util import nearestPoint
 from capture import AgentRules, SIGHT_RANGE
