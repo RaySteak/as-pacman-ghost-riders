@@ -25,6 +25,10 @@ import util
 import numpy as np
 import time
 from copy import deepcopy
+try:
+    from environment import PacmanEnv
+except:
+    print("Environment class not found, if using RL agent, it will not work")
 
 from captureAgents import CaptureAgent
 from util import nearestPoint
@@ -46,7 +50,7 @@ sigmoid_cutoff = 6 # The values of epsilon2 will be taken by sampling the sigmoi
 #################
 
 def create_team(first_index, second_index, is_red,
-                first='MCTSAgent', second='MCTSAgent', num_training=0):
+                first='OffensiveMCTSAgent', second='DefensiveMCTSAgent', num_training=0):
     """
     This function should return a list of two agents that will form the
     team, initialized using firstIndex and secondIndex as their agent
@@ -94,14 +98,9 @@ enemy_positions = None
 not_seen_for = [0, 0]
 
 class MCTSAgent(CaptureAgent):
-    """
-    A base class for reflex agents that choose score-maximizing actions
-    """
-
     def __init__(self, index, time_for_computing=.1):
         super().__init__(index, time_for_computing)
-        self.rl = None
-        self.start = None
+        self.total_dist_to_invading_enemies_weight = None
 
     def register_initial_state(self, game_state):
         global enemy_positions
@@ -203,11 +202,20 @@ class MCTSAgent(CaptureAgent):
         
         # TODO: if there is an enemy on the friendly side, HARD penalty for being far away from him (maybe for deffensive agent only)
         # don't worry, I made sure there is always an estimate of the enemy position available
+        total_dist_to_invading_enemies = 0
+        enemy_positions = [state.data.agent_states[enemies[0]].get_position(), state.data.agent_states[enemies[1]].get_position()]
+        for enemy_pos in enemy_positions:
+            if enemy_pos is None:
+                continue
+            if (is_red and enemy_pos[0] <= self.width / 2) or ((not is_red) and enemy_pos[0] > self.width / 2):
+                total_dist_to_invading_enemies += self.get_maze_distance(my_pos, enemy_pos)
+        
         # TODO: penalize how close the enemy food is to the enemy side (shouldn't improve that much)
         return 100 * state_score \
                + friendlies_carrying[0] + friendlies_carrying[1] \
                - enemies_carrying[0] - enemies_carrying[1] \
                - 10 * len(food_list) + 10 * len(enemy_food_list) \
+               - self.total_dist_to_invading_enemies_weight * total_dist_to_invading_enemies \
                - 5 * dist_to_objective
     
     def rollout_policy(self, state, agent_index, prev_action):
@@ -310,7 +318,7 @@ class MCTSAgent(CaptureAgent):
                 while True:
                     rand_pos = random.choice(food_list)
                     if util.manhattanDistance(rand_pos, friendly1_pos) > SIGHT_RANGE and util.manhattanDistance(rand_pos, friendly2_pos) > SIGHT_RANGE:
-                        enemy_positions[i] = random.choice([(rand_pos[0] + x, rand_pos[1] + y) for x in [-1, 1] for y in [-1, 1] if not game_state.has_wall(rand_pos[0] + x, rand_pos[1] + y)])
+                        enemy_positions[i] = rand_pos
                         enemy_positions[i] = (int(enemy_positions[i][0]), int(enemy_positions[i][1]))
                         break
                 pos = enemy_positions[i]
@@ -325,7 +333,7 @@ class MCTSAgent(CaptureAgent):
             unvisited_node = self.get_not_fully_expanded(root)
             reward = self.rollout(unvisited_node)
             self.backpropagate(unvisited_node, reward)
-            if time.perf_counter() - entry_time > 1 - 0.05:
+            if time.perf_counter() - entry_time > 1.0 - 0.05:
                 print('Time taken: ', time.perf_counter() - entry_time)
                 print('Iterations: ', root.visits)
                 break
@@ -371,7 +379,17 @@ class MCTSAgent(CaptureAgent):
                 enemy_positions[i] = deepcopy(state_after_enemy_act.get_agent_position(self.enemies[i]))
         # print(self.enemy_positions)
         return act
-    
+
+class OffensiveMCTSAgent(MCTSAgent):
+    def __init__(self, index, time_for_computing=.1):
+        super().__init__(index, time_for_computing)
+        self.total_dist_to_invading_enemies_weight = 0.1
+
+class DefensiveMCTSAgent(MCTSAgent):
+    def __init__(self, index, time_for_computing=.1):
+        super().__init__(index, time_for_computing)
+        self.total_dist_to_invading_enemies_weight = 15
+
 class ReinforcementLearningAgent(CaptureAgent):
     """
     A base class for reflex agents that choose score-maximizing actions
@@ -379,6 +397,7 @@ class ReinforcementLearningAgent(CaptureAgent):
 
     def __init__(self, index, time_for_computing=.1):
         super().__init__(index, time_for_computing)
+        # This is set by the testing script. When deploying, this needs to be replaced with a load from a file
         self.rl = None
         self.start = None
 
@@ -403,6 +422,7 @@ class ReinforcementLearningAgent(CaptureAgent):
         """
         Picks among the actions with the highest Q(s,a).
         """
+        
         state_dict = PacmanEnv.get_state_dict(self, game_state, self.index, self.friendlies, self.enemies, self.height, self.width)
         # state_dict['img'] = state_dict['img'].numpy()
         pred = self.rl.predict(state_dict)
@@ -411,39 +431,3 @@ class ReinforcementLearningAgent(CaptureAgent):
         if act not in game_state.get_legal_actions(self.index):
             act = random.choice(game_state.get_legal_actions(self.index))
         return act
-    
-    def get_successor(self, game_state, action):
-        """
-        Finds the next successor which is a grid position (location tuple).
-        """
-        successor = game_state.generate_successor(self.index, action)
-        pos = successor.get_agent_state(self.index).get_position()
-        if pos != nearestPoint(pos):
-            # Only half a grid position was covered
-            return successor.generate_successor(self.index, action)
-        else:
-            return successor
-
-    def evaluate(self, game_state, action):
-        """
-        Computes a linear combination of features and feature weights
-        """
-        features = self.get_features(game_state, action)
-        weights = self.get_weights(game_state, action)
-        return features * weights
-
-    def get_features(self, game_state, action):
-        """
-        Returns a counter of features for the state
-        """
-        features = util.Counter()
-        successor = self.get_successor(game_state, action)
-        features['successor_score'] = self.get_score(successor)
-        return features
-
-    def get_weights(self, game_state, action):
-        """
-        Normally, weights do not depend on the game state.  They can be either
-        a counter or a dictionary.
-        """
-        return {'successor_score': 1.0}

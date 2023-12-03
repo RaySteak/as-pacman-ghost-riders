@@ -56,18 +56,6 @@ def create_team(first_index, second_index, is_red,
     """
     return [eval(first)(first_index), eval(second)(second_index)]
 
-
-def my_legal_actions(state, agent_index, prev_action = None):
-    prev_action = None
-    legal_actions = []
-    for act in state.get_legal_actions(agent_index):
-        if act != Directions.STOP:
-            legal_actions.append(act)
-    # if prev_action is not None and Directions.REVERSE[prev_action] in legal_actions and len(legal_actions) > 1:
-        # legal_actions.remove(Directions.REVERSE[prev_action])
-    # legal_actions = [act for act in state.get_legal_actions(agent_index) if act != Directions.STOP]
-    return legal_actions
-
 ##########
 # Agents #
 ##########
@@ -78,6 +66,7 @@ class ReinforcementLearningAgent(CaptureAgent):
 
     def __init__(self, index, time_for_computing=.1):
         super().__init__(index, time_for_computing)
+        # This is set by the testing script. When deploying, this needs to be replaced with a load from a file
         self.rl = None
         self.start = None
 
@@ -110,39 +99,3 @@ class ReinforcementLearningAgent(CaptureAgent):
         if act not in game_state.get_legal_actions(self.index):
             act = random.choice(game_state.get_legal_actions(self.index))
         return act
-    
-    def get_successor(self, game_state, action):
-        """
-        Finds the next successor which is a grid position (location tuple).
-        """
-        successor = game_state.generate_successor(self.index, action)
-        pos = successor.get_agent_state(self.index).get_position()
-        if pos != nearestPoint(pos):
-            # Only half a grid position was covered
-            return successor.generate_successor(self.index, action)
-        else:
-            return successor
-
-    def evaluate(self, game_state, action):
-        """
-        Computes a linear combination of features and feature weights
-        """
-        features = self.get_features(game_state, action)
-        weights = self.get_weights(game_state, action)
-        return features * weights
-
-    def get_features(self, game_state, action):
-        """
-        Returns a counter of features for the state
-        """
-        features = util.Counter()
-        successor = self.get_successor(game_state, action)
-        features['successor_score'] = self.get_score(successor)
-        return features
-
-    def get_weights(self, game_state, action):
-        """
-        Normally, weights do not depend on the game state.  They can be either
-        a counter or a dictionary.
-        """
-        return {'successor_score': 1.0}
