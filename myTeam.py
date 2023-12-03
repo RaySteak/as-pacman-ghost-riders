@@ -30,7 +30,6 @@ try:
 except:
     print("Environment class not found, if using RL agent, it will not work")
 
-from environment import PacmanEnv
 from captureAgents import CaptureAgent
 from util import nearestPoint
 from capture import AgentRules, SIGHT_RANGE
