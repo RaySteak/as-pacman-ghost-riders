@@ -373,8 +373,11 @@ class MCTSAgent(CaptureAgent):
         act = best_child.action
         # Choose worst (for us) action for our enemy
         if best_child.agent_index in self.enemies:
-            best_enemy_child = self.select_worst_mcts_child(best_child)
-            enemy_act = best_enemy_child.action
+            try:
+                best_enemy_child = self.select_worst_mcts_child(best_child)
+                enemy_act = best_enemy_child.action
+            except:
+                enemy_act = np.random.choice(my_legal_actions(best_child.state, best_child.agent_index))
         
             state_after_enemy_act = self.apply_action(best_child.state, best_child.agent_index, enemy_act)
             for i in range(len(enemy_positions)):
