@@ -39,7 +39,7 @@ ACTION_NAMES = ['North', 'South', 'West', 'East', 'Stop']
 NUM_AGENTS = 4
 # Hyperparameters
 max_depth = 10 # Max depth to which to do rollouts
-discard_enemy_pos_threshold = 999999 # After how many moves of not seeing the enemy to discard the estimated enemy position
+discard_enemy_pos_threshold = 9999999999 # After how many moves of not seeing the enemy to discard the estimated enemy position
 gamma = 0.9 # Discount factor for rollouts
 epsilon = 0.1 # Probability of choosing random action in the rollout policy
 prev_action_weight = 0.001 # Weight of undoing previous action in the rollout policy when choosing a random action (the lower, the less likely the random action will undo the previous action)
@@ -96,6 +96,7 @@ class TreeNode:
 
 enemy_positions = None
 not_seen_for = [0, 0]
+prev_friendly_food_list = None
 
 class MCTSAgent(CaptureAgent):
     def __init__(self, index, time_for_computing=.1):
@@ -202,8 +203,6 @@ class MCTSAgent(CaptureAgent):
         epsilon2 = 1 / (1 + np.exp(-(2 * carrying / normalize_carrying - 1) * sigmoid_cutoff)) # No food => epsilon2 really small; lots of food => epsilon2 really big
         dist_to_objective = (1 - epsilon2) * dist_to_food + epsilon2 * dist_to_friendly_side
         
-        # TODO: if there is an enemy on the friendly side, HARD penalty for being far away from him (maybe for deffensive agent only)
-        # don't worry, I made sure there is always an estimate of the enemy position available
         total_dist_to_invading_enemies = 0
         enemy_positions = [state.data.agent_states[enemies[0]].get_position(), state.data.agent_states[enemies[1]].get_position()]
         for enemy_pos in enemy_positions:
@@ -213,12 +212,18 @@ class MCTSAgent(CaptureAgent):
                 total_dist_to_invading_enemies += self.get_maze_distance(my_pos, enemy_pos)
         
         # TODO: penalize how close the enemy food is to the enemy side (shouldn't improve that much)
+        # return -5 * dist_to_objective
+        food_len_weight = 0
+        total_dist_to_invading_enemies_weight = self.total_dist_to_invading_enemies_weight
+        if self.total_dist_to_invading_enemies_weight < 1:
+            food_len_weight = 10
+        
         return 100 * state_score \
-               + friendlies_carrying[0] + friendlies_carrying[1] \
-               - enemies_carrying[0] - enemies_carrying[1] \
-               - 10 * len(food_list) + 10 * len(enemy_food_list) \
-               - self.total_dist_to_invading_enemies_weight * total_dist_to_invading_enemies \
-               - 5 * dist_to_objective
+                + 10 * friendlies_carrying[0] + 10 * friendlies_carrying[1] \
+                - 10 * enemies_carrying[0] - 10 * enemies_carrying[1] \
+                - total_dist_to_invading_enemies_weight * total_dist_to_invading_enemies \
+                - food_len_weight * len(food_list) \
+                - 5 * dist_to_objective
     
     def rollout_policy(self, state, agent_index, prev_action):
         legal_actions = my_legal_actions(state, agent_index)
@@ -281,10 +286,13 @@ class MCTSAgent(CaptureAgent):
             
             rollout_value += (gamma ** (depth)) * (state_value)
             
-            # Skip over agents whose positions we don't know
             agent_index = (agent_index + 1) % NUM_AGENTS
-            if state.data.agent_states[agent_index].get_position() is None:
-                state.data.timeleft -= 1
+            
+            # Skip over agents whose positions we don't know
+            # if state.data.agent_states[agent_index].get_position() is None:
+            #     state.data.timeleft -= 1
+            #     agent_index = (agent_index + 1) % NUM_AGENTS
+            if agent_index in self.enemies:
                 agent_index = (agent_index + 1) % NUM_AGENTS
             
             depth += 1
@@ -297,6 +305,26 @@ class MCTSAgent(CaptureAgent):
             node.update(reward)
             node = node.parent
             ascent += 1
+    
+    def set_pos_on_friendly_side(self, game_state, friendly1_pos, friendly2_pos, i):
+        global enemy_positions
+        print("SETTING RANDOM POSITION ON FRIENDLY SIDE FOR ENEMY")
+        food_list = game_state.get_red_food().as_list() if self.red else game_state.get_blue_food().as_list()
+        is_friendly = lambda pos: (pos[0] <= self.width // 2) if self.red else (pos[0] > self.width / 2)
+
+        pos_list = [(x, y) for x in range(self.width) for y in range(self.height) if not game_state.has_wall(x, y) and is_friendly((x, y))]
+        pos_array = np.empty(len(pos_list), dtype='object')
+        pos_array[:] = pos_list
+        probability_list = np.array([(1.0 if ((game_state.has_food(pos[0], pos[1])) and
+                                  util.manhattanDistance(pos, friendly1_pos) > SIGHT_RANGE and
+                                  util.manhattanDistance(pos, friendly2_pos) > SIGHT_RANGE) else 1.0/100) for pos in pos_list])
+        probability_list /= np.sum(probability_list)
+        
+        rand_pos = np.random.choice(pos_array, p=probability_list)
+        enemy_positions[i] = rand_pos
+        enemy_positions[i] = (int(enemy_positions[i][0]), int(enemy_positions[i][1]))
+
+        return enemy_positions[i]
 
     def mcts(self, game_state):
         # Set enemy positions to estimated positions if they are valid
@@ -315,28 +343,20 @@ class MCTSAgent(CaptureAgent):
                 not_seen_by_friendly2 = True
             
             if not_seen_by_friendly1 and not_seen_by_friendly2:
-                print("SETTING RANDOM POSITION ON FRIENDLY SIDE FOR ENEMY")
-                food_list = game_state.get_red_food().as_list() if self.red else game_state.get_blue_food().as_list()
-                while True:
-                    rand_pos = random.choice(food_list)
-                    if util.manhattanDistance(rand_pos, friendly1_pos) > SIGHT_RANGE and util.manhattanDistance(rand_pos, friendly2_pos) > SIGHT_RANGE:
-                        enemy_positions[i] = rand_pos
-                        enemy_positions[i] = (int(enemy_positions[i][0]), int(enemy_positions[i][1]))
-                        break
-                pos = enemy_positions[i]
+                pos = self.set_pos_on_friendly_side(game_state, friendly1_pos, friendly2_pos, i)
             
             game_state.data.agent_states[self.enemies[i]].configuration = Configuration(pos, Directions.STOP)
         
-        entry_time = time.perf_counter()
+        entry_time = time.process_time()
         root = TreeNode(game_state, self.index)
         while True:
             # print(f'For {i}, reward is {root.value}')
-            t = time.perf_counter()
+            t = time.process_time()
             unvisited_node = self.get_not_fully_expanded(root)
             reward = self.rollout(unvisited_node)
             self.backpropagate(unvisited_node, reward)
-            if time.perf_counter() - entry_time > 1.0 - 0.05:
-                print('Time taken: ', time.perf_counter() - entry_time)
+            if time.process_time() - entry_time > 0.9 - 0.05:
+                print('Time taken: ', time.process_time() - entry_time)
                 print('Iterations: ', root.visits)
                 break
         
@@ -351,6 +371,15 @@ class MCTSAgent(CaptureAgent):
         return worst_node
 
     def choose_action(self, game_state):
+        global prev_friendly_food_list
+        cur_friendly_food_list = game_state.get_red_food().as_list() if self.red else game_state.get_blue_food().as_list()
+        
+        if prev_friendly_food_list is None:
+            missing_food = []
+        else:
+            missing_food = [pos for pos in prev_friendly_food_list if pos not in cur_friendly_food_list]
+        
+        prev_friendly_food_list = cur_friendly_food_list
         # Update estimated enemy positions
         for i, enemy_ind in enumerate(self.enemies):
             # Set estimated position to actual position if agent is in sight
@@ -360,10 +389,17 @@ class MCTSAgent(CaptureAgent):
                 enemy_positions[i] = (enemy_pos[0], enemy_pos[1])
                 not_seen_for[i] = 0
             # Set estimated position to None if agent hasn't been seen for a long time
+            elif len(missing_food) != 0:
+                print("FOOD WAS STOLEN")
+                enemy_positions[i] = missing_food.pop(0)
+                not_seen_for[i] = 0
             else:
                 not_seen_for[i] += 1
                 if not_seen_for[i] >= discard_enemy_pos_threshold:
-                    enemy_positions[i] = None
+                    friendly1_pos = game_state.data.agent_states[self.friendlies[0]].get_position()
+                    friendly2_pos = game_state.data.agent_states[self.friendlies[1]].get_position()
+                    enemy_positions[i] = self.set_pos_on_friendly_side(game_state, friendly1_pos, friendly2_pos, i)
+                    not_seen_for[i] = 0
         # Run MCTS
         mcts_root = self.mcts(game_state)
         # print([(child.value, child.action) for child in mcts_root.children])
@@ -388,7 +424,7 @@ class MCTSAgent(CaptureAgent):
 class OffensiveMCTSAgent(MCTSAgent):
     def __init__(self, index, time_for_computing=.1):
         super().__init__(index, time_for_computing)
-        self.total_dist_to_invading_enemies_weight = 0.1
+        self.total_dist_to_invading_enemies_weight = 0.0
 
 class DefensiveMCTSAgent(MCTSAgent):
     def __init__(self, index, time_for_computing=.1):
