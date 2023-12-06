@@ -134,7 +134,11 @@ class MCTSAgent(CaptureAgent):
                 sorted_children = sorted(node.children, key=lambda x: x.value, reverse=False)
             else:
                 sorted_children = sorted(node.children, key=lambda x: x.value, reverse=True)
-            return self.get_not_fully_expanded(sorted_children[0])
+            
+            for child in sorted_children:
+                ret = self.get_not_fully_expanded(child)
+                if ret is not None:
+                    return ret
         
         legal_actions = my_legal_actions(node.state, node.agent_index)
         action_probabilities = self.get_action_probabilities(legal_actions, node.action)
@@ -145,6 +149,8 @@ class MCTSAgent(CaptureAgent):
             if action in node.visited_actions:
                 continue
             successor = node.state.generate_successor(node.agent_index, action)
+            if successor.__hash__() in self.in_tree:
+                continue
             node.visited_actions.append(action)
             
             next_agent_index = (node.agent_index + 1) % NUM_AGENTS
@@ -152,7 +158,9 @@ class MCTSAgent(CaptureAgent):
                 next_agent_index = (next_agent_index + 1) % NUM_AGENTS
             
             node.add_child(TreeNode(successor, next_agent_index, node, action))
+            self.in_tree.add(successor.__hash__())
             return node.children[-1]
+        return None
     
     def apply_action(self, state, agent_index, action):
         AgentRules.apply_action(state, action, agent_index)
@@ -327,6 +335,7 @@ class MCTSAgent(CaptureAgent):
         return enemy_positions[i]
 
     def mcts(self, game_state):
+        entry_time = time.process_time()
         # Set enemy positions to estimated positions if they are valid
         # TODO: can an enemy be seen by friendly 1 if friendly 2 is in range only?
         for i, pos in enumerate(enemy_positions):
@@ -347,8 +356,9 @@ class MCTSAgent(CaptureAgent):
             
             game_state.data.agent_states[self.enemies[i]].configuration = Configuration(pos, Directions.STOP)
         
-        entry_time = time.process_time()
+        self.in_tree = set()
         root = TreeNode(game_state, self.index)
+        self.in_tree.add(root.state.__hash__())
         while True:
             # print(f'For {i}, reward is {root.value}')
             t = time.process_time()
