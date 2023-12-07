@@ -25,16 +25,10 @@ import util
 import numpy as np
 import time
 from copy import deepcopy
-try:
-    from environment import PacmanEnv
-except:
-    print("Environment class not found, if using RL agent, it will not work")
 
 from captureAgents import CaptureAgent
-from util import nearestPoint
 from capture import AgentRules, SIGHT_RANGE
 from game import Configuration, Directions, Actions
-ACTION_NAMES = ['North', 'South', 'West', 'East', 'Stop']
 
 NUM_AGENTS = 4
 # Hyperparameters
@@ -466,45 +460,3 @@ class DefensiveMCTSAgent(MCTSAgent):
     def __init__(self, index, time_for_computing=.1):
         super().__init__(index, time_for_computing)
         self.total_dist_to_invading_enemies_weight = 50
-
-class ReinforcementLearningAgent(CaptureAgent):
-    """
-    A base class for reflex agents that choose score-maximizing actions
-    """
-
-    def __init__(self, index, time_for_computing=.1):
-        super().__init__(index, time_for_computing)
-        # This is set by the testing script. When deploying, this needs to be replaced with a load from a file
-        self.rl = None
-        self.start = None
-
-    def register_initial_state(self, game_state):
-        self.is_red = self.index in game_state.red_team 
-        if self.is_red:
-            self.friendlies = game_state.red_team
-            self.enemies = game_state.blue_team
-            self.enemy_positions = [game_state.get_agent_position(enemy) for enemy in self.enemies]
-        else:
-            self.friendlies = game_state.blue_team
-            self.enemies = game_state.red_team
-            self.enemy_positions = [game_state.get_agent_position(enemy) for enemy in self.enemies]
-        self.height = game_state.data.layout.height
-        self.width = game_state.data.layout.width
-        self.prev_act = None
-        # TODO: use the start positions of the enemies somehow
-        self.enemy_positions = [game_state.get_agent_position(self.enemies[0]), game_state.get_agent_position(self.enemies[1])]
-        CaptureAgent.register_initial_state(self, game_state)
-
-    def choose_action(self, game_state):
-        """
-        Picks among the actions with the highest Q(s,a).
-        """
-        
-        state_dict = PacmanEnv.get_state_dict(self, game_state, self.index, self.friendlies, self.enemies, self.height, self.width)
-        # state_dict['img'] = state_dict['img'].numpy()
-        pred = self.rl.predict(state_dict)
-        act = ACTION_NAMES[pred[0]]
-        
-        if act not in game_state.get_legal_actions(self.index):
-            act = random.choice(game_state.get_legal_actions(self.index))
-        return act
