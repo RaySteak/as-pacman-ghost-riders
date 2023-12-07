@@ -6,7 +6,7 @@ We tried different approaches for the agents, including using the reinforcement 
 
 The second approach we tried is an MCTS (Monte Carlo Tree Search) agent, which is the approach that gave us the best result and that we decided to submit for the competition.
 
-Both agents are contained in the **myTeam.py** file, which is the file which should be use to run the competition with our team.
+Both agents are contained in the **myTeam.py** file, which is the file which should be used to run the competition with our team.
 
 # Contents
 
@@ -15,3 +15,4 @@ Both agents are contained in the **myTeam.py** file, which is the file which sho
 - train_RL.ipynb: This is the script we used to train the RL agents. It serves as an experimental environment to tune the agent and visualize the results. 
 - logs: Folder containing the logs of the statistics produced when training the RL agent. It can be viewed using TensorBoard.
 - **myTeam.py**: This is the file which contains our implementation of the Pacman agents to be submitted to the competition. It contains offensive and defensive MCTS agent, which are the ones instantiated when calling the myTeam.py file when passing it as an argument to the capture.py script.
+- test_runs.sh: Bash script used to test several runs of the game, and capturing log information about the games output. It can also detect crashes and outputs the total amount of wins and losses during the tests.
