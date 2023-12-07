@@ -173,8 +173,25 @@ class MCTSAgent(CaptureAgent):
         state.data.timeleft = state.data.timeleft - 1
         return state
     
-    def dist_to_friendly_side(self, state, my_pos):
-        border = [(int(self.width / 2 + (0 if self.red else 1)), i) for i in range(self.height)]
+    def dist_to_friendly_side(self, state, my_pos, is_red):
+        if is_red and my_pos[0] <= self.width / 2:
+            return 0
+        if not is_red and my_pos[0] > self.width / 2:
+            return 0
+        border = [(int(self.width / 2 + (0 if is_red else 1)), i) for i in range(self.height)]
+        border_dists = []
+        for border_cell in border:
+            # Check if cell is wall:
+            if not state.has_wall(border_cell[0], border_cell[1]):
+                border_dists.append(self.get_maze_distance(my_pos, border_cell))
+        return min(border_dists)
+
+    def dist_to_enemy_side(self, state, my_pos, is_red):
+        if is_red and my_pos[0] > self.width / 2:
+            return 0
+        if not is_red and my_pos[0] <= self.width / 2:
+            return 0
+        border = [(int(self.width / 2 + (1 if self.red else 0)), i) for i in range(self.height)]
         border_dists = []
         for border_cell in border:
             # Check if cell is wall:
@@ -201,9 +218,9 @@ class MCTSAgent(CaptureAgent):
         if len(food_list) > 2:
             dist_to_food = min([self.get_maze_distance(my_pos, food) for food in food_list])
         else:
-            dist_to_food = self.dist_to_friendly_side(state, my_pos)
+            dist_to_food = self.dist_to_friendly_side(state, my_pos, is_red)
         
-        dist_to_friendly_side = self.dist_to_friendly_side(state, my_pos)
+        dist_to_friendly_side = self.dist_to_friendly_side(state, my_pos, is_red)
         
         carrying = state.data.agent_states[agent_index].num_carrying
         normalize_carrying = (len(food_list) + carrying)
@@ -222,15 +239,23 @@ class MCTSAgent(CaptureAgent):
         # TODO: penalize how close the enemy food is to the enemy side (shouldn't improve that much)
         # return -5 * dist_to_objective
         food_len_weight = 0
+        enemy_food_len_weight = 0
         total_dist_to_invading_enemies_weight = self.total_dist_to_invading_enemies_weight
         if self.total_dist_to_invading_enemies_weight < 1:
-            food_len_weight = 10
+            dist_to_friendly_side
+            food_len_weight = 30
+            dist_to_enemy_side_weight = 20
+            # dist_to_enemy_side = self.dist_to_enemy_side(state, my_pos)
+        else:
+            enemy_food_len_weight = 30
+            dist_to_enemy_side_weight = 0
         
         return 100 * state_score \
                 + 10 * friendlies_carrying[0] + 10 * friendlies_carrying[1] \
                 - 10 * enemies_carrying[0] - 10 * enemies_carrying[1] \
                 - total_dist_to_invading_enemies_weight * total_dist_to_invading_enemies \
-                - food_len_weight * len(food_list) \
+                - food_len_weight * len(food_list) + enemy_food_len_weight * len(enemy_food_list) \
+                - dist_to_enemy_side_weight * self.dist_to_enemy_side(state, my_pos, is_red) \
                 - 5 * dist_to_objective
     
     def rollout_policy(self, state, agent_index, prev_action):
@@ -239,8 +264,9 @@ class MCTSAgent(CaptureAgent):
         if np.random.uniform(0, 1) < epsilon:
             p = self.get_action_probabilities(legal_actions, prev_action)
             return np.random.choice(legal_actions, replace = False, p = p)
+        is_red = agent_index in state.red_team
         
-        food_list = self.get_food(state).as_list()
+        food_list = state.get_blue_food().as_list() if is_red else state.get_red_food().as_list()
         carrying = state.data.agent_states[agent_index].num_carrying
         
         eat_food_act_values = []
@@ -252,11 +278,11 @@ class MCTSAgent(CaptureAgent):
             
             food_dist_list = [self.get_maze_distance(new_pos, food) for food in food_list]
             if len(food_dist_list) <= 2:
-                eat_food_val = -self.dist_to_friendly_side(state, new_pos)
+                eat_food_val = -self.dist_to_friendly_side(state, new_pos, is_red)
             else:
                 eat_food_val = -min(food_dist_list)
                 
-            score_points_val = -self.dist_to_friendly_side(state, new_pos)
+            score_points_val = -self.dist_to_friendly_side(state, new_pos, is_red)
             
             eat_food_act_values.append(eat_food_val)
             score_points_act_values.append(score_points_val)
@@ -365,7 +391,7 @@ class MCTSAgent(CaptureAgent):
             unvisited_node = self.get_not_fully_expanded(root)
             reward = self.rollout(unvisited_node)
             self.backpropagate(unvisited_node, reward)
-            if time.process_time() - entry_time > 0.9 - 0.05:
+            if time.process_time() - entry_time > 0.85:
                 print('Time taken: ', time.process_time() - entry_time)
                 print('Iterations: ', root.visits)
                 break
